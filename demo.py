@@ -5,7 +5,7 @@ from torchvision import transforms
 
 from skimage import color
 from skimage.io import imsave
-from skimage.draw import line, set_color, circle
+from skimage.draw import line, set_color, disk
 
 from model import Model
 
@@ -51,7 +51,8 @@ parser.add_argument('--uniform', '-u', action='store_true',
 
 parser.add_argument('--scorethreshold', '-st', type=float, default=0.4, 
 	help='threshold on soft inlier count for drawing the estimate (range 0-1)')
-
+parser.add_argument('--device', '-d', type=str, default="cuda", 
+	help='Device to run the neural network (cuda, cpu)')
 parser.add_argument('--verbose', '-v', action='store_true', 
 	help='add vizualizations of neural guidance, soft inler count and hypothesis score to the output')
 
@@ -63,12 +64,14 @@ if not os.path.isdir(output_folder): os.makedirs(output_folder)
 # setup ng dsac estimator
 ngdsac = NGDSAC(opt.hypotheses, opt.inlierthreshold, opt.inlierbeta, opt.inlieralpha, Loss(opt.imagesize), 1)
 
+device = opt.device
 # load network
 nn = Model(opt.capacity)
-nn.load_state_dict(torch.load(opt.model))
+nn.load_state_dict(torch.load(opt.model, map_location=torch.device(device)))
 nn.eval()
-nn = nn.cuda()
-
+# if "cuda" in device:
+# 	nn = nn.cuda() 
+nn = nn.to(device)
 
 def process_frame(image):
 	'''
@@ -105,12 +108,13 @@ def process_frame(image):
 	image = padding(image)
 
 	image_src = image.clone().unsqueeze(0)
+	image_src = image_src.to(device)
 
 	# normalize image (mean and variance), values estimated offline from HLW training set
 	img_mask = image.sum(0) > 0
 	image[:,img_mask] -= 0.45
 	image[:,img_mask] /= 0.25
-	image = image.unsqueeze(0).cuda()
+	image = image.unsqueeze(0)
 
 	with torch.no_grad():
 		#predict data points and neural guidance
@@ -141,7 +145,7 @@ def process_frame(image):
 
 	def draw_models(labels, clr, data):
 		'''
-		Draw circles for a batch of images.
+		Draw disks for a batch of images.
 	
 		labels -- line parameters, array shape (Nx2) where 
 			N is the number of images in the batch
@@ -200,7 +204,7 @@ def process_frame(image):
 				# draw point
 				r = int(points[i, 0, idx] * opt.imagesize)
 				c = int(points[i, 1, idx] * opt.imagesize)
-				rr, cc = circle(r, c, 2)
+				rr, cc = disk(r, c, 2)
 				set_color(data[i], (rr, cc), clr)
 
 		return data
