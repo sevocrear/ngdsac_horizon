@@ -55,10 +55,12 @@ parser.add_argument('--device', '-d', type=str, default="cuda",
 	help='Device to run the neural network (cuda, cpu)')
 parser.add_argument('--verbose', '-v', action='store_true', 
 	help='add vizualizations of neural guidance, soft inler count and hypothesis score to the output')
-
+parser.add_argument('--fps', default =5, type=int, help='fps of the video to be saved')
+parser.add_argument('--res_dir', default = "results", type=str, help='dir to save imgs and video to')
+parser.add_argument('--max_length', default =100, type=int, help='max length of source to be processed')
 opt = parser.parse_args()
 
-output_folder = 'out_' + opt.input
+output_folder = opt.res_dir
 if not os.path.isdir(output_folder): os.makedirs(output_folder)
 
 # setup ng dsac estimator
@@ -69,8 +71,7 @@ device = opt.device
 nn = Model(opt.capacity)
 nn.load_state_dict(torch.load(opt.model, map_location=torch.device(device)))
 nn.eval()
-# if "cuda" in device:
-# 	nn = nn.cuda() 
+
 nn = nn.to(device)
 
 def process_frame(image):
@@ -269,14 +270,23 @@ image = cv2.imread(opt.input)
 if image is not None:
 	#success, it was an image
 	viz = process_frame(image)
-	imsave(output_folder + '/result.png', viz)
+	imsave(os.path.join(output_folder,'result.png'), viz)
 
 else:
 	#failure, try interpreting it as video
 	cap = cv2.VideoCapture(opt.input)
+	rep, image = cap.read()
+	
+	# get fps
+	fps = cap.get(cv2.CAP_PROP_FPS)
+ 
+ 	# Prepare video writer
+	fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+	out_video = cv2.VideoWriter(os.path.join(output_folder,'result.mp4'), fourcc, fps, (image.shape[1], image.shape[0]))
+ 
 	iteration = 0
 
-	while(cap.isOpened()):
+	while(cap.isOpened() and iteration <= opt.max_length):
 		ret, image = cap.read()
 
 		if not ret:
@@ -285,8 +295,11 @@ else:
 		print("Processing frame %5d." % iteration)
 	
 		viz = process_frame(image)
-		imsave(output_folder + '/frame_' + str(iteration).zfill(5) + '.png', viz)
-
+		imsave(os.path.join(output_folder,'frame_' + str(iteration).zfill(5) + '.png'), viz)
 		iteration = iteration + 1
 
+		viz = cv2.resize(viz, (image.shape[1], image.shape[0]), interpolation = 1)
+		out_video.write(viz)
 print('Done.')
+
+out_video.release()
