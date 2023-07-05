@@ -116,7 +116,9 @@ def process_frame(image):
 	image[:,img_mask] -= 0.45
 	image[:,img_mask] /= 0.25
 	image = image.unsqueeze(0)
-
+	
+	print(image.shape)
+	exit()
 	with torch.no_grad():
 		#predict data points and neural guidance
 		points, log_probs = nn(image)
