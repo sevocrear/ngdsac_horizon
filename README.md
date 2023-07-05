@@ -26,6 +26,12 @@ opencv (4.1.0)
 scikit-image (0.15.0)
 ```
 
+### Model Info
+```
+Computational complexity:       4.666785984
+Number of parameters:           4727043 
+```
+
 ## Quick Start: Demo Script
 
 The demo script `demo.py` lets you estimate the horizon line for an image or video, using either a pre-trained network or a network you trained yourself.
@@ -126,3 +132,4 @@ This code builds on DSAC which was introduced in the following paper:
   year={2017}
 }
 ```
+
