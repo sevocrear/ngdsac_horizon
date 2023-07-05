@@ -117,8 +117,6 @@ def process_frame(image):
 	image[:,img_mask] /= 0.25
 	image = image.unsqueeze(0)
 	
-	print(image.shape)
-	exit()
 	with torch.no_grad():
 		#predict data points and neural guidance
 		points, log_probs = nn(image)
@@ -146,6 +144,9 @@ def process_frame(image):
 		rr, cc = line(lY1, lX1, lY2, lX2)
 		set_color(data, (rr, cc), clr)
 
+		rr1, cc1 = line(int((lY1+lY2)/2), 0, int((lY1+lY2)/2), data.shape[1])
+		set_color(data, (rr1, cc1), (255, 0, 255))
+		
 	def draw_models(labels, clr, data):
 		'''
 		Draw disks for a batch of images.
