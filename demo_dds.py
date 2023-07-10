@@ -21,9 +21,10 @@ from cyclonedds.domain import DomainParticipant
 from dds_data_structures import MainCameraImage, Point2D
 from msgs import Points2D
 
-from smoothing import Smooth_KF
+from smoothing import Smooth_KF, Smooth_ParticleFilter
 from datetime import datetime
 
+import matplotlib.pyplot as plt
 
 def process_frame(image, imagesize, device, uniform, nn, ngdsac):
     """
@@ -259,7 +260,9 @@ def main(
 
     # Smoother
     smoother = Smooth_KF(im_shape=(imagesize, imagesize))
-
+    smoother_PF = Smooth_ParticleFilter()
+    smoother_PF.initialize_particles()
+    
     # load network
     nn = Model(capacity)
     nn.load_state_dict(torch.load(model, map_location=torch.device(device)))
@@ -284,6 +287,9 @@ def main(
     cap = cv2.VideoCapture(
         "../../recordings/horizon_imu_2023-07-06-15-41-52/camera_images_clr_log_2023-07-06-15-41-52.mp4"
     )
+    # prepare for plot
+    plot_dict={"particle":[], "kalman":[], "raw":[], 'length':0}
+    
     while True:
         # # Read input data (eulers from imu, image from camera) deleting them from queue
         # image = img_reader.take_one()
@@ -323,7 +329,7 @@ def main(
                 int(line_pts_y_smooth[1]),
                 (0, 255, 0),
             )
-            draw_label(frame, (0, 255, 0), "smooth KF", y_offset=20)
+            draw_label(frame, (0, 255, 0), "Kalman", y_offset=20)
 
             line_pts_y = extract_pts(
                 np.array([[offset, slope]]),
@@ -342,6 +348,28 @@ def main(
             )
             draw_label(frame, (255, 0, 0), "raw")
 
+			# Particle Filter
+            smoother_PF.predict()
+            smoother_PF.update(np.array([[offset, slope]]))
+            smoother_PF.resample()
+            offset_PF, slope_PF = smoother_PF.get_estimate()
+            #Draw
+            line_pts_y_PF = extract_pts(
+                np.array([[offset_PF, slope_PF]]),
+                imagesize=imagesize,
+                padding_top=padding_top,
+                image_scale=image_scale,
+            )[0]
+            # Draw line
+            draw_line(
+                frame,
+                0,
+                int(line_pts_y_PF[0]),
+                frame.shape[1],
+                int(line_pts_y_PF[1]),
+                (0, 0, 255),
+            )
+            draw_label(frame, (0, 0, 255), "Particles", y_offset= 40)
             # Prepare horizon line msg
             p1 = Point2D(x=0, y=line_pts_y_smooth[0])
             p2 = Point2D(x=frame.shape[1], y=line_pts_y_smooth[1])
@@ -361,8 +389,26 @@ def main(
             )
             if cv2.waitKey(1) == ord("q"):
                 break
+        
+        plot_dict['raw'].append([offset, slope])
+        plot_dict['kalman'].append([offset_smooth, slope_smooth])
+        plot_dict['particle'].append([offset_PF, slope_PF])
+        plot_dict['length'] += 1
     if record:
         out.release()
+
+    _, ax = plt.subplots(nrows=1, ncols=2)
+    step = 10
+    ax[0].set_title('Offset')
+    ax[1].set_title('Slope')
+    ax[0].plot(range(plot_dict['length'])[0::step], np.array(plot_dict['raw'])[:,0][0::step], label='raw', alpha = 0.3)
+    ax[0].plot(range(plot_dict['length'])[0::step], np.array(plot_dict['kalman'])[:,0][0::step], label = 'kalman', alpha = 0.3)
+    ax[0].plot(range(plot_dict['length'])[0::step], np.array(plot_dict['particle'])[:,0][0::step], label = 'particles', alpha = 0.3)
+    ax[1].plot(range(plot_dict['length'])[0::step], np.array(plot_dict['raw'])[:,1][0::step], label='raw', alpha = 0.3)
+    ax[1].plot(range(plot_dict['length'])[0::step], np.array(plot_dict['kalman'])[:,1][0::step], label = 'kalman', alpha = 0.3)
+    ax[1].plot(range(plot_dict['length'])[0::step], np.array(plot_dict['particle'])[:,1][0::step], label = 'particles', alpha = 0.3)
+    plt.legend()
+    plt.show()
 
 
 if __name__ == "__main__":
