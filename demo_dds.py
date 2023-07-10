@@ -21,7 +21,8 @@ from cyclonedds.domain import DomainParticipant
 from dds_data_structures import MainCameraImage, Point2D
 from msgs import Points2D
 
-from smoothing import Smooth
+from smoothing import Smooth_KF
+from datetime import datetime
 
 
 def process_frame(image, imagesize, device, uniform, nn, ngdsac):
@@ -100,13 +101,13 @@ def draw_label(img, color, label_text, y_offset=0):
     cv2.putText(
         img,
         label_text,
-        (int(img.shape[1] * 0.9), 50 + y_offset),
+        (int(img.shape[1] * 0.8), 50 + y_offset),
         cv2.FONT_HERSHEY_PLAIN,
         2,
         (0, 0, 0),
         2,
     )
-    cv2.circle(img, (int(img.shape[1] * 0.9 - 10), 50 + y_offset), 5, color, -1)
+    cv2.circle(img, (int(img.shape[1] * 0.8 - 10), 50 + y_offset), 5, color, -1)
 
 
 def draw_line(data, lX1, lY1, lX2, lY2, clr):
@@ -250,14 +251,14 @@ def main(
     if record:
         # Define the codec and create VideoWriter object
         fourcc = cv2.VideoWriter_fourcc(*"XVID")
-        out = cv2.VideoWriter("output.avi", fourcc, 20.0, (640, 480))
+        out = cv2.VideoWriter(f"output_{datetime.now()}.avi", fourcc, 20.0, (640, 480))
     # setup ng dsac estimator
     ngdsac = NGDSAC(
         hypotheses, inlier_thr, inlier_beta, inlier_alpha, Loss(imagesize), 1
     )
 
     # Smoother
-    smoother = Smooth(im_shape=(imagesize, imagesize))
+    smoother = Smooth_KF(im_shape=(imagesize, imagesize))
 
     # load network
     nn = Model(capacity)
@@ -280,19 +281,19 @@ def main(
     debug_img_writer = DataWriter(domain, topic_out_debug_img)
     debug_hor_coff_writed = DataWriter(domain, topic_out_hor_coeff)
 
-    # cap = cv2.VideoCapture(
-    #     "../../recordings/horizon_imu_2023-07-06-15-41-52/camera_images_clr_log_2023-07-06-15-41-52.mp4"
-    # )
+    cap = cv2.VideoCapture(
+        "../../recordings/horizon_imu_2023-07-06-15-41-52/camera_images_clr_log_2023-07-06-15-41-52.mp4"
+    )
     while True:
         # # Read input data (eulers from imu, image from camera) deleting them from queue
-        image = img_reader.take_one()
-        # ret, image = cap.read()
+        # image = img_reader.take_one()
+        ret, image = cap.read()
 
-        if not (image):
+        if not (ret):
             break
 
         #  Pre-process image
-        frame = image.to_numpy()
+        frame = image
 
         # Process frame
         score, padding_top, image_scale = process_frame(
@@ -300,11 +301,11 @@ def main(
         )
 
         # Extract line pts
-        if score > score_thr:
+        if True:  # score > score_thr:
             offset, slope = ngdsac.est_parameters[0]
 
             # Smooth the line
-            smoother.update_horizon(offset, slope)
+            smoother.update_horizon(offset, slope, score)
             offset_smooth, slope_smooth = smoother.get_x()
             line_pts_y_smooth = extract_pts(
                 np.array([[offset_smooth, slope_smooth]]),
@@ -322,7 +323,7 @@ def main(
                 int(line_pts_y_smooth[1]),
                 (0, 255, 0),
             )
-            draw_label(frame, (0, 255, 0), "smooth", y_offset=20)
+            draw_label(frame, (0, 255, 0), "smooth KF", y_offset=20)
 
             line_pts_y = extract_pts(
                 np.array([[offset, slope]]),
@@ -340,13 +341,14 @@ def main(
                 (255, 0, 0),
             )
             draw_label(frame, (255, 0, 0), "raw")
-        # Prepare horizon line msg
-        # p1 = Point2D(x=0, y=horizon_p_0_y)
-        # p2 = Point2D(x=frame.shape[1], y=horizon_p_w_y)
-        # points = Points2D([p1, p2])
 
-        # Publish all
-        # debug_hor_coff_writed.write(points)
+            # Prepare horizon line msg
+            p1 = Point2D(x=0, y=line_pts_y_smooth[0])
+            p2 = Point2D(x=frame.shape[1], y=line_pts_y_smooth[1])
+            points = Points2D([p1, p2])
+
+            # Publish all
+            debug_hor_coff_writed.write(points)
         debug_img_writer.write(MainCameraImage.from_numpy(frame))
 
         # write the frame

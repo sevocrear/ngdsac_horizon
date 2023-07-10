@@ -1,6 +1,6 @@
 from filterpy.kalman import KalmanFilter
 import numpy as np
-class Smooth():
+class Smooth_KF():
     def __init__(self, im_shape = (256, 256)) -> None:
         # Create a Kalman filter with state variables for slope and offset
         kf = KalmanFilter(dim_x=2, dim_z=2)
@@ -8,7 +8,7 @@ class Smooth():
         # Set the initial state estimate and covariance matrix
         x = np.array([0.0, 0.5])  # initial slope and offset
         kf.x = x
-        kf.P = np.diag([0.1, 0.1])  # initial uncertainty
+        kf.P = np.diag([10., 10.])  # initial uncertainty
 
         # Set the transition matrix and process noise
         kf.F = np.array([[1.0, 0.0],
@@ -25,11 +25,12 @@ class Smooth():
         self.image_width = im_shape[0]
         
     # Update the filter with new measurements of the horizon line
-    def update_horizon(self, offset, slope):
+    def update_horizon(self, offset, slope, score):
+        # upd measurement noise according to the score
+        self.kf.R = np.diag([1-score]*2)
         # convert line_pts to slope and offset
         self.kf.predict()
         self.kf.update([slope, offset])
-        
     # Get slope and offset
     def get_x(self, ):
         slope, offset = self.kf.x
