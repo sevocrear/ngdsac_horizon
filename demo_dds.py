@@ -4,7 +4,7 @@ import numpy as np
 from torchvision import transforms
 
 from skimage import color
-from skimage.draw import line, set_color, disk
+from skimage.draw import line, set_color
 
 from model import Model
 import click
@@ -80,56 +80,16 @@ def process_frame(image, imagesize, device, uniform, nn, ngdsac, score_thr):
 	score = ngdsac.batch_inliers[0].sum() / points.shape[2]
 
 	image_src = image_src.cpu().permute(0,2,3,1).numpy() #Torch to Numpy
-	viz_probs = image_src.copy() * 0.2 # make a faint copy of the input image
 	
 	# draw estimated line
 	if score > score_thr:
-		image_src = draw_models(ngdsac.est_parameters, clr=(0,0,1), data=image_src, imagesize=imagesize)
+		line_pts_y = extract_pts(ngdsac.est_parameters, imagesize=imagesize)
 
-	viz = [image_src]
+	# #undo zero padding of inputs	
+	line_pts_y -=padding_top
+	line_pts_y /= image_scale
 
-	# if verbose:	
-	# 	# create additional visualizations
-
-	# 	# draw faint estimated line 
-	# 	viz_score = viz_probs.copy()
-	# 	viz_probs = draw_models(ngdsac.est_parameters, clr=(0.3,0.3,0.3), data=viz_probs)
-	# 	viz_inliers = viz_probs.copy()
-
-	# 	# draw predicted points with neural guidance and soft inlier count, respectively
-	# 	viz_probs = draw_wpoints(points, viz_probs, weights=torch.exp(log_probs), clrmap=cv2.COLORMAP_PLASMA)
-	# 	viz_inliers = draw_wpoints(points, viz_inliers, weights=ngdsac.batch_inliers, clrmap=cv2.COLORMAP_WINTER)
-
-	# 	# create a explicit color map for visualize score of estimate line
-	# 	color_map = np.arange(256).astype('u1')
-	# 	color_map = cv2.applyColorMap(color_map, cv2.COLORMAP_HSV)	
-	# 	color_map = color_map[:,:,::-1]
-
-	# 	# map score to color
-	# 	score = int(score*100) #using only the first portion of HSV to get a nice (red, yellow, green) gradient
-	# 	clr = color_map[score, 0] / 255
-
-	# 	viz_score = draw_models(ngdsac.est_parameters, clr=clr, data=viz_score)
-
-	# 	viz = viz + [viz_probs, viz_inliers, viz_score]
-
-	#undo zero padding of inputs
-	if padding_left > 0:
-		viz = [img[:,:,padding_left:,:] for img in viz]
-	if padding_right > 0:
-		viz = [img[:,:,:-padding_right,:] for img in viz]
-	if padding_top > 0:
-		viz = [img[:,padding_top:,:,:] for img in viz]
-	if padding_bottom > 0:
-		viz = [img[:,:-padding_bottom,:,:] for img in viz]		
-
-	# convert to a single uchar image
-	viz = np.concatenate(viz, axis=2)
-	viz = viz * 255
-	viz = viz.astype('u1')
-
-	img = cv2.resize(viz[0], (0,0), fx = 1/image_scale, fy = 1/image_scale)
-	return img
+	return line_pts_y[0]
 
 def draw_line(data, lX1, lY1, lX2, lY2, clr):
 	'''
@@ -146,7 +106,7 @@ def draw_line(data, lX1, lY1, lX2, lY2, clr):
 	rr, cc = line(lY1, lX1, lY2, lX2)
 	set_color(data, (rr, cc), clr)
 
-def draw_models(labels, clr, data, imagesize):
+def extract_pts(labels, imagesize):
 	'''
 	Draw disks for a batch of images.
 
@@ -158,59 +118,14 @@ def draw_models(labels, clr, data, imagesize):
 
 	# number of image in batch
 	n = labels.shape[0]
-
+	lines_ys = np.zeros((n, 2))
 	for i in range (n):
 
 		#line
 		lY1 = int(labels[i, 0] * imagesize)
 		lY2 = int(labels[i, 1] * imagesize + labels[i, 0] * imagesize)
-		draw_line(data[i], 0, lY1, imagesize, lY2, clr)
-
-		return data	
-
-def draw_wpoints(points, data, weights, clrmap, score_thr):
-	'''
-	Draw 2D points for a batch of images.
-
-	points -- 2D points, array shape (Nx2xM) where 
-		N is the number of images in the batch
-		2 is the number of point dimensions (x, y)
-		M is the number of points
-	data -- batch of images to draw to
-	weights -- array shape (NxM), one weight per point, for visualization
-	clrmap -- OpenCV color map for visualizing weights
-		
-	'''
-
-	# create explicit color map
-	color_map = np.arange(256).astype('u1')
-	color_map = cv2.applyColorMap(color_map, clrmap)
-	color_map = color_map[:,:,::-1] # BGR to RGB
-
-	n = points.shape[0] # number of images
-	m = points.shape[2] # number of points
-
-	for i in range (0, n):
-
-		s_idx = weights[i].sort(descending=False)[1] # draw low weight points first
-		weights[i] = weights[i] / weights[i].max() # normalize weights for visualization
-
-		for j in range(0, m):
-
-			idx = int(s_idx[j])
-
-			# convert weight to color
-			clr_idx = float(min(1, weights[i,idx]))
-			clr_idx = int(clr_idx * 255)
-			clr = color_map[clr_idx, 0] / 255
-
-			# draw point
-			r = int(points[i, 0, idx] * imagesize)
-			c = int(points[i, 1, idx] * imagesize)
-			rr, cc = disk(r, c, 2)
-			set_color(data[i], (rr, cc), clr)
-
-	return data
+		lines_ys[i] = [lY1, lY2]
+	return lines_ys
 
 
 @click.command()
@@ -255,9 +170,15 @@ def draw_wpoints(points, data, weights, clrmap, score_thr):
 	help='threshold on soft inlier count for drawing the estimate (range 0-1)')
 @click.option('--device', '-d', type=str, default="cuda", 
 	help='Device to run the neural network (cuda, cpu)')
+@click.option('--record/--no-record', default=False)
+@click.option('--show/--no-show', default=False)
 def main(topic_in_img, topic_out_debug_img, topic_out_hor_coeff, model, capacity, imagesize, inlier_thr, 
-         inlier_alpha, inlier_beta, hypotheses, uniform, score_thr, device):
+         inlier_alpha, inlier_beta, hypotheses, uniform, score_thr, device, record, show):
 
+	if record:
+			# Define the codec and create VideoWriter object
+			fourcc = cv2.VideoWriter_fourcc(*'XVID')
+			out = cv2.VideoWriter('output.avi',fourcc, 20.0, (640,480))
 	# setup ng dsac estimator
 	ngdsac = NGDSAC(hypotheses, inlier_thr, inlier_beta, inlier_alpha, Loss(imagesize), 1)
 
@@ -282,28 +203,42 @@ def main(topic_in_img, topic_out_debug_img, topic_out_hor_coeff, model, capacity
 	debug_img_writer = DataWriter(domain, topic_out_debug_img)
 	debug_hor_coff_writed = DataWriter(domain, topic_out_hor_coeff)
 
+	cap = cv2.VideoCapture("../../recordings/horizon_imu_2023-07-06-15-41-52/camera_images_clr_log_2023-07-06-15-41-52.mp4")
 	while True:
 		# # Read input data (eulers from imu, image from camera) deleting them from queue
-		image = img_reader.take_one()
+		# image = img_reader.take_one()
+		ret, image = cap.read()
 
-		if not (image):
-			continue
+		if not (ret):
+			break
 
 		#  Pre-process image
-		frame = image.to_numpy()
+		frame = image
 
 		# Process frame
-		viz = process_frame(frame, imagesize, device, uniform, nn, ngdsac, score_thr)
+		line_pts_y = process_frame(frame, imagesize, device, uniform, nn, ngdsac, score_thr)
+
+		# Draw line
+		draw_line(frame, 0, int(line_pts_y[0]), frame.shape[1], int(line_pts_y[1]), (0,255,0))
+	
 		# Prepare horizon line msg
 		# p1 = Point2D(x=0, y=horizon_p_0_y)
 		# p2 = Point2D(x=frame.shape[1], y=horizon_p_w_y)
-		# points = Points2D([p1, p2])
+		# points = Points2D([p1, p2]) 
 
 		# Publish all
 		# debug_hor_coff_writed.write(points)
-		# print(viz.shape)
-		cv2.imwrite('viz.png', viz)
-		debug_img_writer.write(MainCameraImage.from_numpy(viz))
+		debug_img_writer.write(MainCameraImage.from_numpy(frame))
+  
+		# write the frame
+		if record:
+			out.write(cv2.resize(frame, (640, 480), interpolation = 1))
+		if show:
+			cv2.imshow('NGDSAC horizon', cv2.resize(frame, (0,0), fx = 0.5, fy = 0.5, interpolation = 1))
+			if cv2.waitKey(1) == ord('q'):
+				break
+	if record:
+		out.release()
  
 if __name__ == "__main__":
     main()
