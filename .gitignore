@@ -1,0 +1,10 @@
+__pycache__
+out_demo*
+
+# venvs
+*env
+
+# debug imgs
+*.png
+*.jpg
+
