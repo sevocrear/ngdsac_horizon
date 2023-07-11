@@ -1,7 +1,0 @@
-module ImageDDS
-{
-    struct Image
-    {
-        octet flatten_image[4147200];
-    };
-};
