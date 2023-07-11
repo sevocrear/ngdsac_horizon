@@ -3,8 +3,12 @@ out_demo*
 
 # venvs
 *env
-
+*.vscode
 # debug imgs
 *.png
 *.jpg
 
+
+results
+# videos
+*.avi
