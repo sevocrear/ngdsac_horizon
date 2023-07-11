@@ -7,7 +7,7 @@ from skimage import color
 
 import cv2
 
-def process_frame(image, imagesize, device, uniform, nn, ngdsac):
+def process_frame(image, imagesize, device, uniform, nn, ngdsac) -> tuple():
     """
     Estimate horizon line for an image and return score, image_scale in padding.
     
@@ -18,6 +18,7 @@ def process_frame(image, imagesize, device, uniform, nn, ngdsac):
     * uniform (bool) - if use uniform normal prob instead of neural guidance
     * nn (Model) - neural network CNN
     * ngdsac (NGDSAC) - neural guidance model
+    
     Outputs:
     * score (float) - confidence about the estimated horizon line
     * image_scale (float) - ratio image was scaled of
@@ -89,7 +90,16 @@ def process_frame(image, imagesize, device, uniform, nn, ngdsac):
     return score, padding_top, image_scale
 
 
-def draw_label(img, color, label_text, y_offset=0):
+def draw_label(img, color, label_text, y_offset=0) -> None:
+    '''
+    Draw line label along with it's color in right top angle of the frame.
+    
+    Inputs:
+    * img (NumPy Array) - input image
+    * color (tuple) - color of the circle
+    * label_text (str) - label of the line
+    * y_offset (int) - offset of the text wrt top image edge
+    '''
     cv2.putText(
         img,
         label_text,
@@ -102,7 +112,7 @@ def draw_label(img, color, label_text, y_offset=0):
     cv2.circle(img, (int(img.shape[1] * 0.8 - 10), 50 + y_offset), 5, color, -1)
 
 
-def draw_line(data, lX1, lY1, lX2, lY2, clr):
+def draw_line(data, lX1, lY1, lX2, lY2, clr) -> None:
     """
     Draw a line with the given color and opacity.
 
@@ -116,14 +126,19 @@ def draw_line(data, lX1, lY1, lX2, lY2, clr):
     cv2.line(data, (lX1, lY1), (lX2, lY2), clr, thickness=3)
 
 
-def extract_pts(labels, imagesize, padding_top, image_scale):
+def extract_pts(labels, imagesize, padding_top, image_scale) -> np.array:
     """
-    Draw disks for a batch of images.
-
-    labels -- line parameters, array shape (Nx2) where
+    Extract line pts (y-s) from lines' offsets, slopes.
+    
+    Inputs:
+    * labels -- line parameters, array shape (Nx2) where
             N is the number of images in the batch
             2 is the number of line parameters (offset,  slope)
-    data -- batch of images to draw to
+    * image_scale (float) - ratio image was scaled of
+    * padding (float) - how much image was padded from top
+    * imagesize (int) - size of the input image (NN)
+    Output:
+    * lines_ys (Numpy Array) - array of lines' y-s (Nx2)
     """
 
     # number of image in batch
@@ -139,19 +154,46 @@ def extract_pts(labels, imagesize, padding_top, image_scale):
     lines_ys /= image_scale
     return lines_ys
 
-def draw_line_label(frame, line_pts, color = (0, 0, 0), label = 'raw', y_offset = 0):
-        draw_line(
-            frame,
-            0,
-            int(line_pts[0]),
-            frame.shape[1],
-            int(line_pts[1]),
-            color,
-        )
-        draw_label(frame, color, label, y_offset)
+def draw_line_label(frame, line_pts, color = (0, 0, 0), label = 'raw', y_offset = 0) -> None:
+    '''
+    Draw line and it's label on the frame.
+    
+    Inputs:
+    * frame - input image
+    * line_pts (np.array) - line pts (y-s) (Nx2)
+    * color (tuple) - color of the line and label
+    * label (str) - label text
+    * y_offset - offset wrt top image's edge of the label
+    '''
+    draw_line(
+        frame,
+        0,
+        int(line_pts[0]),
+        frame.shape[1],
+        int(line_pts[1]),
+        color,
+    )
+    draw_label(frame, color, label, y_offset)
         
 def get_line(smoother = None, offset = 0.5, slope = 0.0, score = 0.5, imagesize = 256, 
              padding_top = 0, image_scale = 1):
+    '''
+    Apply smoother to the given state [offset, slope] and returns estimated [offset, slope].
+    
+    Inputs:
+    * smoother (Obj) - smoother (None, Kalman Filter, Particle Filter)
+    * offset (float) - horizon line offset wrt left-top angle of the frame
+    * slope (float) - slope of the horizon line wrt x-axis
+    * score (float) - confidence about estimated line
+    * image_scale (float) - ratio image was scaled of
+    * padding_top (float) - how much image was padded from top
+    * imagesize (int) - size of the input image (NN)
+    
+    Outputs:
+    * line_pts_y (np.array) - list of the y-s of the line correspondig x-s (0, img.width).
+    * offset (float) - estimated offset
+    * slope (float) - estimated slope
+    '''
     # Smooth the line with Kalman Filter
     if smoother is not None:
         smoother.step(offset, slope, score)
