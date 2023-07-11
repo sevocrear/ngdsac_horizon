@@ -31,6 +31,8 @@ class Smooth_KF():
         # convert line_pts to slope and offset
         self.kf.predict()
         self.kf.update([slope, offset])
+    def step(self, offset, slope, score):
+        self.update_horizon(offset, slope, score)
     # Get slope and offset
     def get_x(self, ):
         slope, offset = self.kf.x
@@ -68,6 +70,13 @@ class Smooth_ParticleFilter():
         self.particles = self.particles[indices]
         self.weights = np.ones(self.num_particles) / self.num_particles
 
-    def get_estimate(self):
+    def get_x(self):
         estimate = np.average(self.particles, axis = 0, weights = self.weights)
         return tuple(estimate)
+    def step(self, offset, slope, score):
+        self.predict()
+        self.update(np.array([[offset, slope]]))
+        self.resample()
+            
+    
+

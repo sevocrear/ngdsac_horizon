@@ -22,132 +22,10 @@ from dds_data_structures import MainCameraImage, Point2D
 from msgs import Points2D
 
 from smoothing import Smooth_KF, Smooth_ParticleFilter
+from utils import draw_line_label, process_frame, extract_pts, draw_line, draw_label, get_line
 from datetime import datetime
 
 import matplotlib.pyplot as plt
-
-def process_frame(image, imagesize, device, uniform, nn, ngdsac):
-    """
-    Estimate horizon line for an image and return a visualization.
-
-    image -- 3 dim numpy image tensor
-    """
-
-    # determine image scaling factor
-    image_scale = max(image.shape[0], image.shape[1])
-    image_scale = imagesize / image_scale
-
-    # convert image to RGB
-    if len(image.shape) < 3:
-        image = color.gray2rgb(image)
-
-    # store original image dimensions
-    src_h = int(image.shape[0] * image_scale)
-    src_w = int(image.shape[1] * image_scale)
-
-    # resize and to gray scale
-    image = transforms.functional.to_pil_image(image)
-    image = transforms.functional.resize(image, (src_h, src_w))
-    image = transforms.functional.adjust_saturation(image, 0)
-    image = transforms.functional.to_tensor(image)
-
-    # make image square by zero padding
-    padding_left = int((imagesize - image.size(2)) / 2)
-    padding_right = imagesize - image.size(2) - padding_left
-    padding_top = int((imagesize - image.size(1)) / 2)
-    padding_bottom = imagesize - image.size(1) - padding_top
-
-    padding = torch.nn.ZeroPad2d(
-        (padding_left, padding_right, padding_top, padding_bottom)
-    )
-    image = padding(image)
-
-    image_src = image.clone().unsqueeze(0)
-    image_src = image_src.to(device)
-
-    # normalize image (mean and variance), values estimated offline from HLW training set
-    img_mask = image.sum(0) > 0
-    image[:, img_mask] -= 0.45
-    image[:, img_mask] /= 0.25
-    image = image.unsqueeze(0)
-
-    with torch.no_grad():
-        # predict data points and neural guidance
-        points, log_probs = nn(image)
-
-        if uniform:
-            # overwrite neural guidance with uniform sampling probabilities
-            log_probs.fill_(1 / log_probs.size(1))
-            log_probs = torch.log(log_probs)
-
-        # fit line with NG-DSAC, providing dummy ground truth labels
-        ngdsac(
-            points,
-            log_probs,
-            torch.zeros((1, 2)),
-            torch.zeros((1)),
-            torch.ones((1)),
-            torch.ones((1)),
-        )
-
-        # normalized inlier score of the estimated line
-    score = ngdsac.batch_inliers[0].sum() / points.shape[2]
-
-    image_src = image_src.cpu().permute(0, 2, 3, 1).numpy()  # Torch to Numpy
-
-    return score, padding_top, image_scale
-
-
-def draw_label(img, color, label_text, y_offset=0):
-    cv2.putText(
-        img,
-        label_text,
-        (int(img.shape[1] * 0.8), 50 + y_offset),
-        cv2.FONT_HERSHEY_PLAIN,
-        2,
-        (0, 0, 0),
-        2,
-    )
-    cv2.circle(img, (int(img.shape[1] * 0.8 - 10), 50 + y_offset), 5, color, -1)
-
-
-def draw_line(data, lX1, lY1, lX2, lY2, clr):
-    """
-    Draw a line with the given color and opacity.
-
-    data -- image to draw to
-    lX1 -- x value of line segment start point
-    lY1 -- y value of line segment start point
-    lX2 -- x value of line segment end point
-    lY2 -- y value of line segment end point
-    clr -- line color, triple of values
-    """
-    cv2.line(data, (lX1, lY1), (lX2, lY2), clr, thickness=3)
-
-
-def extract_pts(labels, imagesize, padding_top, image_scale):
-    """
-    Draw disks for a batch of images.
-
-    labels -- line parameters, array shape (Nx2) where
-            N is the number of images in the batch
-            2 is the number of line parameters (offset,  slope)
-    data -- batch of images to draw to
-    """
-
-    # number of image in batch
-    n = labels.shape[0]
-    lines_ys = np.zeros((n, 2))
-    for i in range(n):
-        # line
-        lY1 = int(labels[i, 0] * imagesize)
-        lY2 = int(labels[i, 1] * imagesize + labels[i, 0] * imagesize)
-        lines_ys[i] = [lY1, lY2]
-    # #undo zero padding of inputs
-    lines_ys -= padding_top
-    lines_ys /= image_scale
-    return lines_ys
-
 
 @click.command()
 @click.option(
@@ -259,9 +137,9 @@ def main(
     )
 
     # Smoother
-    smoother = Smooth_KF(im_shape=(imagesize, imagesize))
-    smoother_PF = Smooth_ParticleFilter()
-    smoother_PF.initialize_particles()
+    smoother_kf = Smooth_KF(im_shape=(imagesize, imagesize))
+    smoother_pf = Smooth_ParticleFilter()
+    smoother_pf.initialize_particles()
     
     # load network
     nn = Model(capacity)
@@ -307,76 +185,30 @@ def main(
         )
 
         # Extract line pts
-        if True:  # score > score_thr:
-            offset, slope = ngdsac.est_parameters[0]
+        # if True:  # score > score_thr:
+        offset, slope = ngdsac.est_parameters[0]
 
-            # Smooth the line
-            smoother.update_horizon(offset, slope, score)
-            offset_smooth, slope_smooth = smoother.get_x()
-            line_pts_y_smooth = extract_pts(
-                np.array([[offset_smooth, slope_smooth]]),
-                imagesize=imagesize,
-                padding_top=padding_top,
-                image_scale=image_scale,
-            )[0]
+        # raw
+        line_pts_y, _, _ = get_line(None, offset, slope, score, imagesize, padding_top, image_scale)
+        # Kalman Filter
+        line_pts_y_kf, offset_kf, slope_kf = get_line(smoother_kf, offset, slope, score, imagesize, padding_top, image_scale)
+        # Particle Filter
+        line_pts_y_pf, offset_pf, slope_pf = get_line(smoother_pf, offset, slope, score, imagesize, padding_top, image_scale)
+        
+        # Draw line
+        draw_line_label(frame, line_pts_y, (255, 0, 0), "raw")
+        # Draw line
+        draw_line_label(frame, line_pts_y_kf, (0, 255, 0), "Kalman", y_offset=20)
+        # Draw line
+        draw_line_label(frame, line_pts_y_pf, (0, 0, 255), "Particles", y_offset= 40)
+        
+        # Prepare horizon line msg
+        p1 = Point2D(x=0, y=line_pts_y_kf[0])
+        p2 = Point2D(x=frame.shape[1], y=line_pts_y_kf[1])
+        points = Points2D([p1, p2])
 
-            # Draw line
-            draw_line(
-                frame,
-                0,
-                int(line_pts_y_smooth[0]),
-                frame.shape[1],
-                int(line_pts_y_smooth[1]),
-                (0, 255, 0),
-            )
-            draw_label(frame, (0, 255, 0), "Kalman", y_offset=20)
-
-            line_pts_y = extract_pts(
-                np.array([[offset, slope]]),
-                imagesize=imagesize,
-                padding_top=padding_top,
-                image_scale=image_scale,
-            )[0]
-            # Draw line
-            draw_line(
-                frame,
-                0,
-                int(line_pts_y[0]),
-                frame.shape[1],
-                int(line_pts_y[1]),
-                (255, 0, 0),
-            )
-            draw_label(frame, (255, 0, 0), "raw")
-
-			# Particle Filter
-            smoother_PF.predict()
-            smoother_PF.update(np.array([[offset, slope]]))
-            smoother_PF.resample()
-            offset_PF, slope_PF = smoother_PF.get_estimate()
-            #Draw
-            line_pts_y_PF = extract_pts(
-                np.array([[offset_PF, slope_PF]]),
-                imagesize=imagesize,
-                padding_top=padding_top,
-                image_scale=image_scale,
-            )[0]
-            # Draw line
-            draw_line(
-                frame,
-                0,
-                int(line_pts_y_PF[0]),
-                frame.shape[1],
-                int(line_pts_y_PF[1]),
-                (0, 0, 255),
-            )
-            draw_label(frame, (0, 0, 255), "Particles", y_offset= 40)
-            # Prepare horizon line msg
-            p1 = Point2D(x=0, y=line_pts_y_smooth[0])
-            p2 = Point2D(x=frame.shape[1], y=line_pts_y_smooth[1])
-            points = Points2D([p1, p2])
-
-            # Publish all
-            debug_hor_coff_writed.write(points)
+        # Publish all
+        debug_hor_coff_writed.write(points)
         debug_img_writer.write(MainCameraImage.from_numpy(frame))
 
         # write the frame
@@ -391,8 +223,8 @@ def main(
                 break
         
         plot_dict['raw'].append([offset, slope])
-        plot_dict['kalman'].append([offset_smooth, slope_smooth])
-        plot_dict['particle'].append([offset_PF, slope_PF])
+        plot_dict['kalman'].append([offset_kf, slope_kf])
+        plot_dict['particle'].append([offset_pf, slope_pf])
         plot_dict['length'] += 1
     if record:
         out.release()
