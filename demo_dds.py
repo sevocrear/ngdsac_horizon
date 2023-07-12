@@ -13,6 +13,11 @@ from cyclonedds.topic import Topic
 from cyclonedds.sub import DataReader
 from cyclonedds.pub import DataWriter
 from cyclonedds.domain import DomainParticipant
+
+from cyclonedds.util import duration
+from cyclonedds.qos import Qos
+from cyclonedds.qos import Policy
+
 from dds_data_structures import MainCameraImage, Point2D
 from msgs import Points2D
 
@@ -154,7 +159,7 @@ def main(
     topic_out_hor_coeff = Topic(domain, topic_out_hor_coeff, Points2D)
 
     # Subs-Pubs
-    img_reader = DataReader(domain, in_topic_img)
+    img_reader = DataReader(domain, in_topic_img, qos=Qos(Policy.Reliability.Reliable(max_blocking_time=duration(seconds=1))))
 
     debug_img_writer = DataWriter(domain, topic_out_debug_img)
     debug_hor_coff_writed = DataWriter(domain, topic_out_hor_coeff)
