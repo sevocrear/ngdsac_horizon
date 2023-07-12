@@ -54,14 +54,11 @@ def process_frame(image, imagesize, device, uniform, nn, ngdsac) -> tuple():
     )
     image = padding(image)
 
-    image_src = image.clone().unsqueeze(0)
-    image_src = image_src.to(device)
-
     # normalize image (mean and variance), values estimated offline from HLW training set
     img_mask = image.sum(0) > 0
     image[:, img_mask] -= 0.45
     image[:, img_mask] /= 0.25
-    image = image.unsqueeze(0)
+    image = image.unsqueeze(0).to(device)
 
     with torch.no_grad():
         # predict data points and neural guidance
@@ -84,9 +81,6 @@ def process_frame(image, imagesize, device, uniform, nn, ngdsac) -> tuple():
 
         # normalized inlier score of the estimated line
     score = ngdsac.batch_inliers[0].sum() / points.shape[2]
-
-    image_src = image_src.cpu().permute(0, 2, 3, 1).numpy()  # Torch to Numpy
-
     return score, padding_top, image_scale
 
 
